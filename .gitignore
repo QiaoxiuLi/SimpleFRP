@@ -2,4 +2,5 @@ dist/
 .tools/
 .codex-go-cache/
 .codex-go-modcache/
+backups/
 .DS_Store

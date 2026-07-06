@@ -3,4 +3,6 @@ dist/
 .codex-go-cache/
 .codex-go-modcache/
 backups/
+output/
+tmp/
 .DS_Store

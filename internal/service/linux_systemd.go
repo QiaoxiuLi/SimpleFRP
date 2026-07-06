@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -55,7 +56,16 @@ func enableService(role app.Role) error {
 func disableService(role app.Role) error {
 	switch runtime.GOOS {
 	case "linux":
-		return run("systemctl", "disable", unitName(role))
+		_ = run("systemctl", "disable", unitName(role))
+		for _, path := range linuxServicePaths(role) {
+			_ = os.Remove(path)
+		}
+		_ = run("systemctl", "daemon-reload")
+		return nil
+	case "darwin":
+		_ = run("launchctl", "unload", "/Library/LaunchDaemons/com.simplefrp.client.plist")
+		_ = os.Remove("/Library/LaunchDaemons/com.simplefrp.client.plist")
+		return nil
 	case "windows":
 		return run("schtasks", "/Delete", "/TN", windowsTaskName, "/F")
 	default:
@@ -65,6 +75,15 @@ func disableService(role app.Role) error {
 
 func unitName(role app.Role) string {
 	return fmt.Sprintf("simplefrp-%s", role)
+}
+
+func linuxServicePaths(role app.Role) []string {
+	name := unitName(role) + ".service"
+	return []string{
+		"/etc/systemd/system/" + name,
+		"/usr/lib/systemd/system/" + name,
+		"/lib/systemd/system/" + name,
+	}
 }
 
 func run(name string, args ...string) error {

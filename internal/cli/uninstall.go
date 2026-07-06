@@ -16,8 +16,8 @@ func uninstallCommand() *cobra.Command {
 		Short: "Uninstall SimpleFRP",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			role, _ := app.DetectRole()
-			_ = service.Disable(role)
 			_ = service.Stop(role)
+			_ = service.Disable(role)
 			_ = sysutil.StopSimpleFRPProcesses()
 			_ = os.RemoveAll(sysutil.ConfigDir())
 			_ = os.RemoveAll(sysutil.DataDir())

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="SimpleFRP Client" Language="1033" Version="0.1.0" Manufacturer="SimpleFRP" UpgradeCode="11111111-1111-1111-1111-111111111111">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+  </Product>
+</Wix>

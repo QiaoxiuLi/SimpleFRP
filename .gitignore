@@ -1,0 +1,5 @@
+dist/
+.tools/
+.codex-go-cache/
+.codex-go-modcache/
+.DS_Store

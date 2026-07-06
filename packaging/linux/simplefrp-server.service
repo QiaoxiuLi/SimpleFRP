@@ -1,0 +1,16 @@
+[Unit]
+Description=SimpleFRP Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=simplefrp
+Group=simplefrp
+ExecStart=/usr/bin/simplefrp daemon --role server
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

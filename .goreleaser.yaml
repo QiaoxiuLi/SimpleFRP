@@ -1,0 +1,67 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: simplefrp-linux
+    main: ./cmd/simplefrp
+    binary: simplefrp
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64]
+  - id: simplefrp-windows
+    main: ./cmd/simplefrp
+    binary: simplefrp
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64]
+  - id: simplefrp-macos
+    main: ./cmd/simplefrp
+    binary: simplefrp
+    env: [CGO_ENABLED=0]
+    goos: [darwin]
+    goarch: [arm64]
+nfpms:
+  - id: server
+    package_name: simplefrp-server
+    file_name_template: simplefrp-server-linux-amd64
+    builds: [simplefrp-linux]
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      preremove: packaging/linux/preremove.sh
+      postremove: packaging/linux/postremove.sh
+    contents:
+      - src: packaging/linux/simplefrp-server.service
+        dst: /usr/lib/systemd/system/simplefrp-server.service
+      - src: configs/role.server
+        dst: /etc/simplefrp/role
+        file_info:
+          mode: 0640
+  - id: client
+    package_name: simplefrp-client
+    file_name_template: simplefrp-client-linux-amd64
+    builds: [simplefrp-linux]
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      preremove: packaging/linux/preremove.sh
+      postremove: packaging/linux/postremove.sh
+    contents:
+      - src: packaging/linux/simplefrp-client.service
+        dst: /usr/lib/systemd/system/simplefrp-client.service
+      - src: configs/role.client
+        dst: /etc/simplefrp/role
+        file_info:
+          mode: 0640
+archives:
+  - id: windows
+    builds: [simplefrp-windows]
+    format: zip
+    name_template: simplefrp-client-windows-amd64
+  - id: macos
+    builds: [simplefrp-macos]
+    format: tar.gz
+    name_template: simplefrp-client-darwin-arm64

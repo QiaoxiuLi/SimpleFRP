@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SimpleFRP Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SimpleFRP Dashboard</h1>
+      <span id="status">live</span>
+    </header>
+    <section class="metrics">
+      <article><strong id="clients">0</strong><span>Clients</span></article>
+      <article><strong id="tunnels">0</strong><span>Active tunnels</span></article>
+      <article><strong id="traffic">0 B</strong><span>Total traffic</span></article>
+    </section>
+    <nav class="ranges">
+      <button data-range="today">Today</button>
+      <button data-range="1h">1 hour</button>
+      <button data-range="7d">7 days</button>
+      <button data-range="30d">30 days</button>
+    </nav>
+    <section>
+      <h2>Connections</h2>
+      <table>
+        <thead><tr><th>IPv4</th><th>IPv6</th><th>Time</th><th>Duration</th><th>Tunnel</th><th>Local</th><th>Public</th><th>Status</th></tr></thead>
+        <tbody id="connections"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

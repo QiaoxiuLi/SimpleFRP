@@ -1,0 +1,19 @@
+name: simplefrp-server
+arch: amd64
+platform: linux
+version: 0.1.0
+section: net
+priority: optional
+maintainer: SimpleFRP
+description: SimpleFRP server package
+contents:
+  - src: ./dist/simplefrp
+    dst: /usr/bin/simplefrp
+  - src: ./packaging/linux/simplefrp-server.service
+    dst: /usr/lib/systemd/system/simplefrp-server.service
+  - src: ./configs/role.server
+    dst: /etc/simplefrp/role
+scripts:
+  postinstall: ./packaging/linux/postinstall.sh
+  preremove: ./packaging/linux/preremove.sh
+  postremove: ./packaging/linux/postremove.sh

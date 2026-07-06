@@ -1,0 +1,6 @@
+bind_address = "0.0.0.0"
+control_port = 8388
+dashboard_port = 8387
+dashboard_token = "change-on-install"
+port_min = 20000
+port_max = 60000

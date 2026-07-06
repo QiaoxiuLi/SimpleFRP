@@ -1,0 +1,19 @@
+name: simplefrp-client
+arch: amd64
+platform: linux
+version: 0.1.0
+section: net
+priority: optional
+maintainer: SimpleFRP
+description: SimpleFRP client package
+contents:
+  - src: ./dist/simplefrp
+    dst: /usr/bin/simplefrp
+  - src: ./packaging/linux/simplefrp-client.service
+    dst: /usr/lib/systemd/system/simplefrp-client.service
+  - src: ./configs/role.client
+    dst: /etc/simplefrp/role
+scripts:
+  postinstall: ./packaging/linux/postinstall.sh
+  preremove: ./packaging/linux/preremove.sh
+  postremove: ./packaging/linux/postremove.sh

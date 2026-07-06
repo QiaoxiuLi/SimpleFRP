@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+install -d "/Library/Application Support/SimpleFRP/data" "/Library/Logs/SimpleFRP"
+printf 'client\n' >"/Library/Application Support/SimpleFRP/role"
+cp packaging/macos/com.simplefrp.client.plist /Library/LaunchDaemons/com.simplefrp.client.plist
+launchctl load /Library/LaunchDaemons/com.simplefrp.client.plist || true

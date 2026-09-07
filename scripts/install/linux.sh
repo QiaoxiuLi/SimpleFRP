@@ -56,9 +56,9 @@ else
  installed=$(rpm -q --qf '%{VERSION}' "simplefrp-$role" 2>/dev/null || true)
  if [[ "$installed" == 0.1.0 ]]; then
   # Skip only the destructive old removal hooks; new install hooks still run.
-  "${privilege[@]}" rpm -U --nopreun --nopostun "$package"
+  "${privilege[@]}" rpm -U --replacepkgs --nopreun --nopostun "$package"
  else
-  "${privilege[@]}" rpm -U "$package"
+  "${privilege[@]}" rpm -U --replacepkgs "$package"
  fi
 fi
 if [[ $configure -eq 1 ]]; then

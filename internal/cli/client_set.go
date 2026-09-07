@@ -1,59 +1,15 @@
 package cli
 
-import (
-	"fmt"
+import "github.com/spf13/cobra"
 
-	"github.com/simplefrp/simplefrp/internal/app"
-	"github.com/simplefrp/simplefrp/internal/config"
-	"github.com/simplefrp/simplefrp/internal/crypto"
-	"github.com/simplefrp/simplefrp/internal/service"
-	"github.com/simplefrp/simplefrp/internal/ux"
-	"github.com/spf13/cobra"
-)
-
+// Keep the original command as an alias of the complete setup workflow.
+// Both paths validate the server before replacing an existing configuration.
 func setCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "set server",
-		Short: "Reset client server",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] != "server" {
-				return cmd.Help()
-			}
-			addr, err := ux.Ask(ux.ServerPrompt)
-			if err != nil {
-				return err
-			}
-			password, err := ux.AskSecret(ux.PasswordShortPrompt)
-			if err != nil {
-				return err
-			}
-			cfg, err := config.LoadClient()
-			if err != nil {
-				cfg = config.DefaultClientConfig()
-			}
-			cfg.ServerAddress = addr
-			cfg.PasswordKey = crypto.RandomPasswordKey(password, config.SharedAuthSalt)
-			cfg.Tunnels = nil
-			if err := config.SaveClient(cfg); err != nil {
-				return err
-			}
-			if err := createNextTunnel(); err != nil {
-				return err
-			}
-			if err = service.Enable(app.RoleClient); err != nil {
-				return fmt.Errorf("configuration saved, but service setup failed: %w", err)
-			}
-			if err = service.Stop(app.RoleClient); err != nil {
-				return fmt.Errorf("configuration saved, but old daemon could not stop: %w", err)
-			}
-			if err = service.Start(app.RoleClient); err != nil {
-				return fmt.Errorf("configuration saved, but daemon start failed: %w; run simplefrp daemon --role client", err)
-			}
-			fmt.Println()
-			fmt.Println("Server updated successfully.")
-			fmt.Println("Connected to SimpleFRP server successfully.")
-			return nil
-		},
-	}
+	return &cobra.Command{Use: "set server", Short: "Configure this client using the setup wizard", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if args[0] != "server" {
+			return cmd.Help()
+		}
+		wizard := setupCommand()
+		return wizard.RunE(wizard, nil)
+	}}
 }

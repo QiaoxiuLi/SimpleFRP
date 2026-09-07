@@ -8,4 +8,6 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: "1.27.1" }
       - run: go test ./...
-      - run: make package-linux
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --snapshot --clean --skip=publish

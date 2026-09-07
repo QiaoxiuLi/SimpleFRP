@@ -9,10 +9,21 @@ import (
 )
 
 func ConfigDir() string {
+	if path := os.Getenv("SIMPLEFRP_CONFIG_DIR"); path != "" {
+		return path
+	}
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join(os.Getenv("ProgramData"), "SimpleFRP")
+		legacy := filepath.Join(os.Getenv("ProgramData"), "SimpleFRP")
+		if _, err := os.Stat(filepath.Join(legacy, "client.toml")); err == nil {
+			return legacy
+		}
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "SimpleFRP")
 	case "darwin":
+		if os.Getuid() != 0 {
+			home, _ := os.UserHomeDir()
+			return filepath.Join(home, "Library", "Application Support", "SimpleFRP")
+		}
 		return "/Library/Application Support/SimpleFRP"
 	default:
 		return "/etc/simplefrp"
@@ -35,6 +46,10 @@ func LogDir() string {
 	case "windows":
 		return filepath.Join(ConfigDir(), "logs")
 	case "darwin":
+		if os.Getuid() != 0 {
+			home, _ := os.UserHomeDir()
+			return filepath.Join(home, "Library", "Logs", "SimpleFRP")
+		}
 		return "/Library/Logs/SimpleFRP"
 	default:
 		return "/var/log/simplefrp"

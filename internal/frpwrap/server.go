@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -22,13 +21,26 @@ type ServerEngine struct {
 	mu        sync.Mutex
 	clients   map[string]*clientSession
 	listeners map[int]net.Listener
-	pending   map[string]chan net.Conn
+	pending   map[string]*pendingStream
+	bindings  map[int]tunnelBinding
+	control   net.Listener
+}
+
+type tunnelBinding struct {
+	clientID string
+	record   storage.TunnelRecord
+}
+type pendingStream struct {
+	clientID string
+	tunnelID int
+	channel  chan net.Conn
 }
 
 type clientSession struct {
-	id  string
-	enc *json.Encoder
-	mu  sync.Mutex
+	conn net.Conn
+	id   string
+	enc  *json.Encoder
+	mu   sync.Mutex
 }
 
 func NewServerEngine(cfg config.ServerConfig, store ...*storage.Store) *ServerEngine {
@@ -41,7 +53,8 @@ func NewServerEngine(cfg config.ServerConfig, store ...*storage.Store) *ServerEn
 		store:     s,
 		clients:   map[string]*clientSession{},
 		listeners: map[int]net.Listener{},
-		pending:   map[string]chan net.Conn{},
+		pending:   map[string]*pendingStream{},
+		bindings:  map[int]tunnelBinding{},
 	}
 }
 
@@ -50,6 +63,10 @@ func (e *ServerEngine) ListenAndServe() error {
 	if err != nil {
 		return err
 	}
+	e.mu.Lock()
+	e.control = ln
+	e.mu.Unlock()
+	defer ln.Close()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -60,18 +77,21 @@ func (e *ServerEngine) ListenAndServe() error {
 }
 
 func (e *ServerEngine) handle(conn net.Conn) {
-	reader := bufio.NewReader(conn)
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	reader := bufio.NewReaderSize(conn, 64*1024)
+	line, err := reader.ReadSlice('\n')
 	var msg protocol.Message
-	if err := json.NewDecoder(reader).Decode(&msg); err != nil {
-		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Code: "UNKNOWN_ERROR", Message: "Unable to read client request."})
+	if err != nil || json.Unmarshal(line, &msg) != nil {
 		_ = conn.Close()
 		return
 	}
+	conn = &bufferedConn{Conn: conn, reader: reader}
 	if !e.authorized(msg) {
 		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Code: "AUTH_FAILED", Message: "Authentication failed."})
 		_ = conn.Close()
 		return
 	}
+	_ = conn.SetDeadline(time.Time{})
 	switch msg.Type {
 	case protocol.TypeAuth:
 		e.handleControl(conn, msg)
@@ -92,21 +112,69 @@ func (e *ServerEngine) authorized(msg protocol.Message) bool {
 }
 
 func (e *ServerEngine) handleControl(conn net.Conn, msg protocol.Message) {
-	session := &clientSession{id: msg.ClientID, enc: json.NewEncoder(conn)}
+	defer conn.Close()
+	session := &clientSession{id: msg.ClientID, conn: conn, enc: json.NewEncoder(conn)}
 	e.mu.Lock()
+	old := e.clients[msg.ClientID]
 	e.clients[msg.ClientID] = session
 	e.mu.Unlock()
-	_ = session.send(protocol.Message{Type: protocol.TypeHeartbeat})
-	for _, t := range msg.Tunnels {
-		_ = e.ensureTunnel(session, storage.TunnelRecord{ID: t.TunnelID, LocalPort: t.LocalPort, PublicPort: t.PublicPort, Status: "success"})
+	if old != nil {
+		_ = old.conn.Close()
 	}
-	_, _ = io.Copy(io.Discard, conn)
-	e.mu.Lock()
-	if e.clients[msg.ClientID] == session {
+	defer func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.clients[msg.ClientID] != session {
+			return
+		}
 		delete(e.clients, msg.ClientID)
+		for _, binding := range e.bindings {
+			if binding.clientID == msg.ClientID && e.store != nil {
+				record := binding.record
+				record.Status = "offline"
+				_ = e.store.SetTunnel(record)
+			}
+		}
+	}()
+	wanted := map[int]bool{}
+	for _, t := range msg.Tunnels {
+		wanted[t.PublicPort] = true
+		if err := e.ensureTunnel(session, storage.TunnelRecord{ID: t.TunnelID, LocalPort: t.LocalPort, PublicPort: t.PublicPort, Status: "success"}); err != nil {
+			return
+		}
+	}
+	// Reconnecting with an updated configuration releases this client's removed ports.
+	e.mu.Lock()
+	for port, binding := range e.bindings {
+		if binding.clientID == msg.ClientID && !wanted[port] {
+			if ln := e.listeners[port]; ln != nil {
+				_ = ln.Close()
+			}
+			delete(e.listeners, port)
+			delete(e.bindings, port)
+			if e.store != nil {
+				_ = e.store.DeleteTunnel(port)
+			}
+		}
 	}
 	e.mu.Unlock()
-	_ = conn.Close()
+	if session.send(protocol.Message{Type: protocol.TypeHeartbeat}) != nil {
+		return
+	}
+	decoder := json.NewDecoder(conn)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+		var heartbeat protocol.Message
+		if decoder.Decode(&heartbeat) != nil {
+			return
+		}
+		if heartbeat.Type != protocol.TypeHeartbeat {
+			return
+		}
+		if session.send(protocol.Message{Type: protocol.TypeHeartbeat}) != nil {
+			return
+		}
+	}
 }
 
 func (e *ServerEngine) handleCreateTunnel(conn net.Conn, msg protocol.Message) {
@@ -122,15 +190,7 @@ func (e *ServerEngine) handleCreateTunnel(conn net.Conn, msg protocol.Message) {
 	}
 	session := e.client(msg.ClientID)
 	if session == nil {
-		if err := e.checkPublicPort(publicPort); err != nil {
-			_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Code: "SERVER_PORT_IN_USE", Message: err.Error()})
-			return
-		}
-		if e.store != nil {
-			_ = e.store.SetTunnel(storage.TunnelRecord{ID: msg.TunnelID, LocalPort: msg.LocalPort, PublicPort: publicPort, Status: "pending"})
-		}
-		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: true, TunnelID: msg.TunnelID, LocalPort: msg.LocalPort, PublicPort: publicPort, Message: "Tunnel reserved successfully."})
-		return
+		session = &clientSession{id: msg.ClientID}
 	}
 	record := storage.TunnelRecord{ID: msg.TunnelID, LocalPort: msg.LocalPort, PublicPort: publicPort, Status: "success"}
 	if err := e.ensureTunnel(session, record); err != nil {
@@ -140,25 +200,18 @@ func (e *ServerEngine) handleCreateTunnel(conn net.Conn, msg protocol.Message) {
 	_ = json.NewEncoder(conn).Encode(protocol.Response{OK: true, TunnelID: msg.TunnelID, LocalPort: msg.LocalPort, PublicPort: publicPort, Message: "Tunnel created successfully."})
 }
 
-func (e *ServerEngine) checkPublicPort(port int) error {
-	e.mu.Lock()
-	_, exists := e.listeners[port]
-	e.mu.Unlock()
-	if exists {
-		return errors.New("public port is already in use")
-	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", e.cfg.BindAddress, port))
-	if err != nil {
-		return err
-	}
-	return ln.Close()
-}
-
 func (e *ServerEngine) handleDeleteTunnel(conn net.Conn, msg protocol.Message) {
 	defer conn.Close()
 	e.mu.Lock()
+	binding, exists := e.bindings[msg.PublicPort]
+	if exists && (binding.clientID != msg.ClientID || binding.record.ID != msg.TunnelID) {
+		e.mu.Unlock()
+		_ = json.NewEncoder(conn).Encode(protocol.Response{OK: false, Code: "AUTH_FAILED", Message: "Tunnel belongs to another client."})
+		return
+	}
 	ln := e.listeners[msg.PublicPort]
 	delete(e.listeners, msg.PublicPort)
+	delete(e.bindings, msg.PublicPort)
 	e.mu.Unlock()
 	if ln != nil {
 		_ = ln.Close()
@@ -171,21 +224,29 @@ func (e *ServerEngine) handleDeleteTunnel(conn net.Conn, msg protocol.Message) {
 
 func (e *ServerEngine) handleDataConn(conn net.Conn, msg protocol.Message) {
 	e.mu.Lock()
-	ch := e.pending[msg.RequestID]
-	delete(e.pending, msg.RequestID)
-	e.mu.Unlock()
-	if ch == nil {
+	defer e.mu.Unlock()
+	pending := e.pending[msg.RequestID]
+	if pending == nil || pending.clientID != msg.ClientID || pending.tunnelID != msg.TunnelID {
 		_ = conn.Close()
 		return
 	}
-	ch <- conn
+	delete(e.pending, msg.RequestID)
+	pending.channel <- conn
 }
 
 func (e *ServerEngine) ensureTunnel(session *clientSession, record storage.TunnelRecord) error {
-	if record.PublicPort <= 0 || record.LocalPort <= 0 {
+	if record.PublicPort <= 1024 || record.PublicPort > 65535 || record.LocalPort <= 0 || record.LocalPort > 65535 {
 		return errors.New("invalid tunnel ports")
 	}
+	if e.cfg.PortMin > 0 && (record.PublicPort < e.cfg.PortMin || record.PublicPort > e.cfg.PortMax) {
+		return errors.New("public port is outside the configured range")
+	}
 	e.mu.Lock()
+	if binding, ok := e.bindings[record.PublicPort]; ok && (binding.clientID != session.id || binding.record.ID != record.ID) {
+		e.mu.Unlock()
+		return errors.New("public port belongs to another tunnel")
+	}
+	e.bindings[record.PublicPort] = tunnelBinding{session.id, record}
 	if _, ok := e.listeners[record.PublicPort]; ok {
 		e.mu.Unlock()
 		if e.store != nil {
@@ -195,6 +256,7 @@ func (e *ServerEngine) ensureTunnel(session *clientSession, record storage.Tunne
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", e.cfg.BindAddress, record.PublicPort))
 	if err != nil {
+		delete(e.bindings, record.PublicPort)
 		e.mu.Unlock()
 		return err
 	}
@@ -203,17 +265,25 @@ func (e *ServerEngine) ensureTunnel(session *clientSession, record storage.Tunne
 	if e.store != nil {
 		_ = e.store.SetTunnel(record)
 	}
-	go e.acceptTunnel(session, ln, record)
+	go e.acceptTunnel(ln, record.PublicPort)
 	return nil
 }
 
-func (e *ServerEngine) acceptTunnel(session *clientSession, ln net.Listener, record storage.TunnelRecord) {
+func (e *ServerEngine) acceptTunnel(ln net.Listener, port int) {
 	for {
 		publicConn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go e.bridgePublicConn(session, publicConn, record)
+		e.mu.Lock()
+		binding, ok := e.bindings[port]
+		session := e.clients[binding.clientID]
+		e.mu.Unlock()
+		if !ok || session == nil {
+			_ = publicConn.Close()
+			continue
+		}
+		go e.bridgePublicConn(session, publicConn, binding.record)
 	}
 }
 
@@ -222,12 +292,22 @@ func (e *ServerEngine) bridgePublicConn(session *clientSession, publicConn net.C
 	requestID, _ := crypto.RandomToken(18)
 	dataCh := make(chan net.Conn, 1)
 	e.mu.Lock()
-	e.pending[requestID] = dataCh
+	if len(e.pending) >= 256 {
+		e.mu.Unlock()
+		_ = publicConn.Close()
+		return
+	}
+	e.pending[requestID] = &pendingStream{session.id, record.ID, dataCh}
 	e.mu.Unlock()
 	defer func() {
 		e.mu.Lock()
 		delete(e.pending, requestID)
 		e.mu.Unlock()
+		select {
+		case conn := <-dataCh:
+			_ = conn.Close()
+		default:
+		}
 	}()
 	if err := session.send(protocol.Message{Type: protocol.TypeOpenStream, RequestID: requestID, TunnelID: record.ID, LocalPort: record.LocalPort, PublicPort: record.PublicPort}); err != nil {
 		_ = publicConn.Close()
@@ -281,6 +361,7 @@ func (e *ServerEngine) client(id string) *clientSession {
 func (s *clientSession) send(msg protocol.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_ = s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return s.enc.Encode(msg)
 }
 
@@ -306,23 +387,17 @@ func (e *ServerEngine) logConnection(addr net.Addr, record storage.TunnelRecord,
 	})
 }
 
-func proxy(a, b net.Conn) (int64, int64) {
-	var wg sync.WaitGroup
-	var uploaded int64
-	var downloaded int64
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		uploaded, _ = io.Copy(b, a)
-		_ = b.Close()
-		_ = a.Close()
-	}()
-	go func() {
-		defer wg.Done()
-		downloaded, _ = io.Copy(a, b)
-		_ = a.Close()
-		_ = b.Close()
-	}()
-	wg.Wait()
-	return uploaded, downloaded
+// Close releases this engine's resources for bounded tests and orderly shutdown.
+func (e *ServerEngine) Close() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.control != nil {
+		_ = e.control.Close()
+	}
+	for _, ln := range e.listeners {
+		_ = ln.Close()
+	}
+	for _, client := range e.clients {
+		_ = client.conn.Close()
+	}
 }

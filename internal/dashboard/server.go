@@ -26,7 +26,11 @@ func New(cfg config.ServerConfig, store *storage.Store) *Server {
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	s.routes(mux)
-	addr := fmt.Sprintf("%s:%d", s.cfg.BindAddress, s.cfg.DashboardPort)
+	host := s.cfg.DashboardBindAddress
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	addr := fmt.Sprintf("%s:%d", host, s.cfg.DashboardPort)
 	return http.ListenAndServe(addr, mux)
 }
 

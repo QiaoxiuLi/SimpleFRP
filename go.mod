@@ -8,6 +8,7 @@ require (
 	github.com/spf13/viper v1.19.0
 	go.etcd.io/bbolt v1.3.11
 	golang.org/x/crypto v0.37.0
+	golang.org/x/term v0.31.0
 )
 
 require (

@@ -6,6 +6,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.23" }
+        with: { go-version: "1.27.1" }
       - run: go test ./...
       - run: make package-windows
+      - name: Validate installer syntax and user installation
+        shell: pwsh
+        run: |
+          Get-ChildItem packaging/windows,scripts/install -Filter *.ps1 -Recurse | ForEach-Object {
+            $tokens=$null; $parseErrors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tokens,[ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+          Expand-Archive dist/simplefrp-client-windows-amd64.zip -DestinationPath "$env:RUNNER_TEMP/simplefrp-install"
+          & "$env:RUNNER_TEMP/simplefrp-install/install.ps1" -NoConfigure
+          & "$env:LOCALAPPDATA/Programs/SimpleFRP/simplefrp.exe" setup --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed client cannot execute' }

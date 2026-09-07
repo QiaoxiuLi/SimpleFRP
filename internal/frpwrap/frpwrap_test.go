@@ -27,6 +27,7 @@ func TestReverseTCPForwarding(t *testing.T) {
 		PortMin:       publicPort,
 		PortMax:       publicPort,
 	})
+	defer server.Close()
 	go func() {
 		_ = server.ListenAndServe()
 	}()
@@ -70,6 +71,7 @@ func TestCreateTunnelRejectsWrongAuth(t *testing.T) {
 		PortMin:     freePort(t),
 		PortMax:     freePort(t),
 	})
+	defer server.Close()
 	go func() {
 		_ = server.ListenAndServe()
 	}()

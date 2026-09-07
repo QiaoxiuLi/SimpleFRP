@@ -15,7 +15,7 @@ func pwdCommand() *cobra.Command {
 		Use:   "pwd",
 		Short: "Reset server password",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			password, err := ux.Ask(ux.PasswordPrompt)
+			password, err := ux.AskSecret(ux.PasswordPrompt)
 			if err != nil {
 				return err
 			}

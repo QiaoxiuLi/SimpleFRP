@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -42,5 +43,8 @@ func authProof(key string, msg protocol.Message) string {
 		msg.RequestedPublicPort,
 		msg.AuthTimestamp,
 	)
+	// Bind the registered target list as well as scalar fields.
+	tunnels, _ := json.Marshal(msg.Tunnels)
+	_, _ = mac.Write(tunnels)
 	return hex.EncodeToString(mac.Sum(nil))
 }

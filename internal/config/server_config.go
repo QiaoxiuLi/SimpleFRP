@@ -8,14 +8,15 @@ import (
 )
 
 type ServerConfig struct {
-	BindAddress    string `mapstructure:"bind_address"`
-	ControlPort    int    `mapstructure:"control_port"`
-	DashboardPort  int    `mapstructure:"dashboard_port"`
-	PasswordHash   string `mapstructure:"password_hash"`
-	AuthKey        string `mapstructure:"auth_key"`
-	DashboardToken string `mapstructure:"dashboard_token"`
-	PortMin        int    `mapstructure:"port_min"`
-	PortMax        int    `mapstructure:"port_max"`
+	BindAddress          string `mapstructure:"bind_address"`
+	ControlPort          int    `mapstructure:"control_port"`
+	DashboardBindAddress string `mapstructure:"dashboard_bind_address"`
+	DashboardPort        int    `mapstructure:"dashboard_port"`
+	PasswordHash         string `mapstructure:"password_hash"`
+	AuthKey              string `mapstructure:"auth_key"`
+	DashboardToken       string `mapstructure:"dashboard_token"`
+	PortMin              int    `mapstructure:"port_min"`
+	PortMax              int    `mapstructure:"port_max"`
 }
 
 func NewServerConfig(password string) (ServerConfig, error) {
@@ -32,14 +33,15 @@ func NewServerConfig(password string) (ServerConfig, error) {
 	}
 	authKey := crypto.RandomPasswordKey(password, SharedAuthSalt)
 	return ServerConfig{
-		BindAddress:    "0.0.0.0",
-		ControlPort:    8388,
-		DashboardPort:  8387,
-		PasswordHash:   hash,
-		AuthKey:        authKey,
-		DashboardToken: token,
-		PortMin:        20000,
-		PortMax:        60000,
+		BindAddress:          "0.0.0.0",
+		ControlPort:          8388,
+		DashboardPort:        8387,
+		DashboardBindAddress: "127.0.0.1",
+		PasswordHash:         hash,
+		AuthKey:              authKey,
+		DashboardToken:       token,
+		PortMin:              20000,
+		PortMax:              60000,
 	}, nil
 }
 
@@ -53,11 +55,12 @@ func SaveServer(cfg ServerConfig) error {
 	content := []byte(fmt.Sprintf(`bind_address = %q
 control_port = %d
 dashboard_port = %d
+dashboard_bind_address = %q
 password_hash = %q
 auth_key = %q
 dashboard_token = %q
 port_min = %d
 port_max = %d
-`, cfg.BindAddress, cfg.ControlPort, cfg.DashboardPort, cfg.PasswordHash, cfg.AuthKey, cfg.DashboardToken, cfg.PortMin, cfg.PortMax))
+`, cfg.BindAddress, cfg.ControlPort, cfg.DashboardPort, cfg.DashboardBindAddress, cfg.PasswordHash, cfg.AuthKey, cfg.DashboardToken, cfg.PortMin, cfg.PortMax))
 	return writeSecure(sysutil.ServerConfigPath(), content)
 }

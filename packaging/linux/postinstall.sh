@@ -11,7 +11,7 @@ systemctl daemon-reload
 systemctl enable "simplefrp-$role"
 if [ "$role" = "server" ]; then
   printf 'SimpleFRP Server Port: 8388\nSimpleFRP Dashboard Port: 8387\n'
-  printf 'Run "sudo simplefrp pwd" to set the server password and start SimpleFRP.\n'
+  printf 'Run "sudo simplefrp setup --role server" to set the server password and start SimpleFRP.\n'
 else
-  printf 'Run "simplefrp set server" to connect this client and start SimpleFRP.\n'
+  printf 'Run "sudo simplefrp setup --role client" to connect this client and start SimpleFRP.\n'
 fi

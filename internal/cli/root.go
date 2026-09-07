@@ -19,7 +19,7 @@ func Execute() error {
 		Args:  cobra.ArbitraryArgs,
 		RunE:  routeImplicitTunnelCommand,
 	}
-	root.AddCommand(pwdCommand(), stateCommand(), nextCommand(), setCommand(), deleteCommand(), uninstallCommand(), daemonCommand())
+	root.AddCommand(pwdCommand(), stateCommand(), nextCommand(), setCommand(), deleteCommand(), uninstallCommand(), daemonCommand(), setupCommand())
 	return root.Execute()
 }
 
@@ -46,11 +46,8 @@ func routeImplicitTunnelCommand(cmd *cobra.Command, args []string) error {
 }
 
 func updateLocalPort(id, port int) error {
-	if err := sysutil.ValidatePort(port); err != nil {
-		return fmt.Errorf(ux.Failure("Local port update failed.", "The requested port is invalid or reserved.", "Choose another port and try again.", err.Error()))
-	}
-	if !sysutil.IsPortAvailable(port) {
-		return fmt.Errorf(ux.Failure("Local port update failed.", fmt.Sprintf("Port %d is already in use on this computer.", port), "Choose another port and try again.", ""))
+	if port < 1 || port > 65535 {
+		return fmt.Errorf(ux.Failure("Local port update failed.", "The requested port is invalid or reserved.", "Choose another port and try again.", "port must be between 1 and 65535"))
 	}
 	cfg, err := config.LoadClient()
 	if err != nil {
@@ -81,6 +78,9 @@ func updatePublicPort(id, port int) error {
 	t, idx, ok := config.FindTunnel(cfg.Tunnels, id)
 	if !ok {
 		return fmt.Errorf(ux.Failure("Public port update failed.", fmt.Sprintf("Tunnel ID %d does not exist.", id), `Run "simplefrp state" to view existing tunnels.`, ""))
+	}
+	if t.PublicPort == port {
+		return nil
 	}
 	t.PublicPort = port
 	t.Status = "success"

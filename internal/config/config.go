@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/simplefrp/simplefrp/internal/sysutil"
 	"github.com/spf13/viper"
@@ -27,9 +28,23 @@ func writeSecure(path string, content []byte) error {
 	if err := os.MkdirAll(sysutil.ConfigDir(), 0750); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, content, 0640); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), ".simplefrp-*.toml")
+	if err != nil {
 		return err
 	}
-	_ = sysutil.ChownToServiceUser(path)
-	return nil
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err = f.Write(content); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	_ = sysutil.ChownToServiceUser(tmp)
+	return os.Rename(tmp, path)
 }

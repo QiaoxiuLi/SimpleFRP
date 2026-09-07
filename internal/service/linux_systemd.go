@@ -21,9 +21,9 @@ func startService(role app.Role) error {
 	case "linux":
 		return run("systemctl", "start", unitName(role))
 	case "darwin":
-		return run("launchctl", "load", "/Library/LaunchDaemons/com.simplefrp.client.plist")
+		return startMacService()
 	case "windows":
-		return run("schtasks", "/Run", "/TN", windowsTaskName)
+		return startWindowsService()
 	default:
 		return nil
 	}
@@ -34,9 +34,9 @@ func stopService(role app.Role) error {
 	case "linux":
 		return run("systemctl", "stop", unitName(role))
 	case "darwin":
-		return run("launchctl", "unload", "/Library/LaunchDaemons/com.simplefrp.client.plist")
+		return stopMacService()
 	case "windows":
-		return run("schtasks", "/End", "/TN", windowsTaskName)
+		return stopWindowsService()
 	default:
 		return nil
 	}
@@ -46,8 +46,10 @@ func enableService(role app.Role) error {
 	switch runtime.GOOS {
 	case "linux":
 		return run("systemctl", "enable", unitName(role))
+	case "darwin":
+		return installMacService()
 	case "windows":
-		return nil
+		return installWindowsService()
 	default:
 		return nil
 	}
@@ -63,11 +65,12 @@ func disableService(role app.Role) error {
 		_ = run("systemctl", "daemon-reload")
 		return nil
 	case "darwin":
-		_ = run("launchctl", "unload", "/Library/LaunchDaemons/com.simplefrp.client.plist")
-		_ = os.Remove("/Library/LaunchDaemons/com.simplefrp.client.plist")
+		_ = stopMacService()
+		_ = os.Remove(macPlistPath())
 		return nil
 	case "windows":
-		return run("schtasks", "/Delete", "/TN", windowsTaskName, "/F")
+		_ = stopWindowsService()
+		return os.Remove(windowsShortcut())
 	default:
 		return nil
 	}

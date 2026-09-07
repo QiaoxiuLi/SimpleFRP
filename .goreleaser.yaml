@@ -1,4 +1,15 @@
 version: 2
+project_name: SimpleFRP
+checksum:
+  name_template: checksums.txt
+release:
+  extra_files:
+    - glob: scripts/install/linux.sh
+      name_template: install-linux.sh
+    - glob: scripts/install/macos.sh
+      name_template: install-macos.sh
+    - glob: scripts/install/windows.ps1
+      name_template: install-windows.ps1
 before:
   hooks:
     - go mod tidy
@@ -23,9 +34,10 @@ builds:
     goarch: [arm64]
 nfpms:
   - id: server
+    maintainer: QiaoxiuLi
     package_name: simplefrp-server
     file_name_template: simplefrp-server-linux-amd64
-    builds: [simplefrp-linux]
+    ids: [simplefrp-linux]
     formats: [deb, rpm]
     bindir: /usr/bin
     scripts:
@@ -33,6 +45,12 @@ nfpms:
       preremove: packaging/linux/preremove.sh
       postremove: packaging/linux/postremove.sh
     contents:
+      - src: scripts/install/linux.sh
+        dst: /usr/share/simplefrp/install-linux.sh
+        file_info:
+          mode: 0755
+      - src: docs/QUICKSTART.md
+        dst: /usr/share/doc/simplefrp/QUICKSTART.md
       - src: packaging/linux/simplefrp-server.service
         dst: /usr/lib/systemd/system/simplefrp-server.service
       - src: configs/role.server
@@ -40,9 +58,10 @@ nfpms:
         file_info:
           mode: 0640
   - id: client
+    maintainer: QiaoxiuLi
     package_name: simplefrp-client
     file_name_template: simplefrp-client-linux-amd64
-    builds: [simplefrp-linux]
+    ids: [simplefrp-linux]
     formats: [deb, rpm]
     bindir: /usr/bin
     scripts:
@@ -50,6 +69,12 @@ nfpms:
       preremove: packaging/linux/preremove.sh
       postremove: packaging/linux/postremove.sh
     contents:
+      - src: scripts/install/linux.sh
+        dst: /usr/share/simplefrp/install-linux.sh
+        file_info:
+          mode: 0755
+      - src: docs/QUICKSTART.md
+        dst: /usr/share/doc/simplefrp/QUICKSTART.md
       - src: packaging/linux/simplefrp-client.service
         dst: /usr/lib/systemd/system/simplefrp-client.service
       - src: configs/role.client
@@ -58,10 +83,31 @@ nfpms:
           mode: 0640
 archives:
   - id: windows
-    builds: [simplefrp-windows]
-    format: zip
+    ids: [simplefrp-windows]
+    formats: [zip]
     name_template: simplefrp-client-windows-amd64
+    files:
+      - README.md
+      - LICENSE
+      - src: packaging/windows/install.ps1
+        dst: .
+        strip_parent: true
+      - src: packaging/windows/install.cmd
+        dst: .
+        strip_parent: true
+      - src: docs/QUICKSTART.md
+        dst: .
+        strip_parent: true
   - id: macos
-    builds: [simplefrp-macos]
-    format: tar.gz
+    ids: [simplefrp-macos]
+    formats: [tar.gz]
     name_template: simplefrp-client-darwin-arm64
+    files:
+      - README.md
+      - LICENSE
+      - src: docs/QUICKSTART.md
+        dst: .
+        strip_parent: true
+      - src: packaging/macos/install.sh
+        dst: .
+        strip_parent: true

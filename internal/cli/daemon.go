@@ -2,6 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"github.com/simplefrp/simplefrp/internal/sysutil"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 
 	"github.com/simplefrp/simplefrp/internal/config"
 	"github.com/simplefrp/simplefrp/internal/dashboard"
@@ -26,17 +31,27 @@ func daemonCommand() *cobra.Command {
 					return err
 				}
 				defer store.Close()
-				go func() {
-					_ = frpwrap.NewServerEngine(cfg, store).ListenAndServe()
-				}()
-				return dashboard.New(cfg, store).ListenAndServe()
+				engine := frpwrap.NewServerEngine(cfg, store)
+				defer engine.Close()
+				errors := make(chan error, 2)
+				go func() { errors <- engine.ListenAndServe() }()
+				go func() { errors <- dashboard.New(cfg, store).ListenAndServe() }()
+				return <-errors
 			}
-			cfg, err := config.LoadClient()
+			_, err := config.LoadClient()
 			if err != nil {
 				return err
 			}
+			if runtime.GOOS == "windows" {
+				if err = sysutil.EnsureBaseDirs(); err != nil {
+					return err
+				}
+				if err = os.WriteFile(filepath.Join(sysutil.DataDir(), "client.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+					return err
+				}
+			}
 			fmt.Println("SimpleFRP client daemon started.")
-			return frpwrap.NewClientEngine(cfg).Run(cfg.Tunnels)
+			return frpwrap.RunConfiguredClient(config.LoadClient)
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "client", "daemon role: server or client")

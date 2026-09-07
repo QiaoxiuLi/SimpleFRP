@@ -2,6 +2,30 @@
 
 SimpleFRP is a lightweight cross-platform TCP reverse forwarding tool for quick deployment. It provides an FRP-style server/client workflow with a small command line interface, automatic tunnel creation, package-based installation, autostart setup, dashboard visibility, and clean uninstall behavior.
 
+## Quick Start (one command per platform)
+
+Each release includes an installer and [step-by-step quick start](docs/QUICKSTART.md). Linux installs system services using root/sudo; macOS and Windows default to the current user and need no administrator password for a fresh installation.
+
+**Linux server:**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/QiaoxiuLi/SimpleFRP/main/scripts/install/linux.sh) server
+```
+Use `client` instead of `server` for a Linux client.
+
+**macOS Apple Silicon client:**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/QiaoxiuLi/SimpleFRP/main/scripts/install/macos.sh)
+```
+
+**Windows x64 client, ordinary PowerShell:**
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/QiaoxiuLi/SimpleFRP/main/scripts/install/windows.ps1')))
+```
+
+The wizard asks for the server address, a hidden password, and the existing local service port, then saves the mapping and starts the client. For a downloaded archive run `sh install.sh` on macOS or `install.cmd` on Windows. Mainland China/offline Linux servers can upload the release files and use `bash install-linux.sh server --package ./simplefrp-server-linux-amd64.rpm` without accessing GitHub.
+
+Existing Linux installations are backed up and retain their configuration. Upgrade v0.1.0 using this installer: its old package removal hooks otherwise delete runtime files during an upgrade. Upgrade both peers together because v0.1.1 signs the full registered target list.
+
 ## What It Does
 
 SimpleFRP is designed for users who need to expose a TCP service behind NAT or a firewall without writing FRP configuration files by hand.
@@ -17,7 +41,7 @@ Typical flow:
 
 Default server ports:
 
-- Dashboard: `8387`
+- Dashboard: `127.0.0.1:8387` (local administration only)
 - Control/heartbeat: `8388`
 - Public tunnel ports: automatically allocated from `20000` to `60000`
 
@@ -34,7 +58,7 @@ https://github.com/QiaoxiuLi/SimpleFRP/releases/latest
 Server:
 
 ```bash
-wget https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.0/simplefrp-server-linux-amd64.deb
+wget https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.1/simplefrp-server-linux-amd64.deb
 sudo dpkg -i simplefrp-server-linux-amd64.deb
 sudo simplefrp pwd
 ```
@@ -42,7 +66,7 @@ sudo simplefrp pwd
 Client:
 
 ```bash
-wget https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.0/simplefrp-client-linux-amd64.deb
+wget https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.1/simplefrp-client-linux-amd64.deb
 sudo dpkg -i simplefrp-client-linux-amd64.deb
 simplefrp set server
 ```
@@ -52,7 +76,7 @@ simplefrp set server
 Server:
 
 ```bash
-curl -LO https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.0/simplefrp-server-linux-amd64.rpm
+curl -LO https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.1/simplefrp-server-linux-amd64.rpm
 sudo rpm -i simplefrp-server-linux-amd64.rpm
 sudo simplefrp pwd
 ```
@@ -60,7 +84,7 @@ sudo simplefrp pwd
 Client:
 
 ```bash
-curl -LO https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.0/simplefrp-client-linux-amd64.rpm
+curl -LO https://github.com/QiaoxiuLi/SimpleFRP/releases/download/v0.1.1/simplefrp-client-linux-amd64.rpm
 sudo rpm -i simplefrp-client-linux-amd64.rpm
 simplefrp set server
 ```
@@ -68,8 +92,21 @@ simplefrp set server
 Open firewall/security-group ports on the public server:
 
 - `8388/tcp` for client control traffic
-- `8387/tcp` for dashboard access
 - Any allocated public tunnel port, for example `35001/tcp`
+
+## macOS Installation (Apple Silicon)
+
+Download `simplefrp-client-darwin-arm64.tar.gz` from the release, extract it, then run:
+
+```bash
+sh install.sh --local-port 3000
+```
+
+The installer uses `~/.local/bin/simplefrp` and does not require an administrator password. After `set server`, a user LaunchAgent keeps the client running and starts it at login. It does not change your shell PATH. The user must be logged in and the Mac awake for forwarding to remain available.
+
+An existing listening local port is the intended forwarding **target**, so a web server already running on 3000 is valid. Local targets may also use service ports such as 80, 443 or 3389. Public listeners must be free, nonprivileged ports inside the server's configured `port_min`/`port_max` range. Configure that range before requesting a port outside the default 20000–60000 range.
+
+Changes to local/public ports and tunnel deletion are picked up by the running client within approximately two seconds. Reconnects retain the public listener and attach new connections to the latest client session; removed mappings are released when the new configuration registers.
 
 ## Client Setup
 
@@ -148,8 +185,10 @@ simplefrp uninstall
 The server dashboard is available at:
 
 ```text
-http://SERVER_PUBLIC_IP:8387
+http://127.0.0.1:8387
 ```
+
+Use an SSH local forward for remote administration. The dashboard has no login layer, so it defaults to loopback; `dashboard_bind_address` can be set explicitly for a trusted management network. It does not require changing Nginx.
 
 It shows:
 
@@ -193,6 +232,7 @@ It performs these tasks:
 
 - Maintains a control connection to the server.
 - Registers configured tunnels with the server.
+- Exchanges a small heartbeat every 20 seconds; detects silent control failures after 65 seconds and retries in three seconds.
 - Opens a data connection when the server requests a new stream.
 - Connects that data stream to `127.0.0.1:<local_port>`.
 - Restarts cleanly after `simplefrp set server`.
@@ -215,7 +255,9 @@ SimpleFRP never stores the plaintext password.
 
 - Server password is stored as an Argon2id hash.
 - Client stores derived password material, not the original password.
-- Control requests use HMAC-SHA256 signatures.
+- Control requests use HMAC-SHA256 signatures, including the full registered tunnel target list.
+- Upgrade both server and client to v0.1.1 together; its signed registration is not compatible with v0.1.0.
+- HMAC authenticates requests; this transport does not encrypt forwarded application traffic. Use an application protocol such as HTTPS/WSS when confidentiality is needed.
 - The derived client secret is not sent over the network.
 
 ### Storage
@@ -231,9 +273,9 @@ Default runtime paths:
 - Linux config: `/etc/simplefrp`
 - Linux data: `/var/lib/simplefrp`
 - Linux logs: `/var/log/simplefrp`
-- macOS config/data: `/Library/Application Support/SimpleFRP`
-- macOS logs: `/Library/Logs/SimpleFRP`
-- Windows config/data/logs: `%ProgramData%\SimpleFRP`
+- macOS user config/data: `~/Library/Application Support/SimpleFRP`
+- macOS user logs: `~/Library/Logs/SimpleFRP` (legacy root installs retain `/Library` paths)
+- Windows new user config/data/logs: `%LOCALAPPDATA%\SimpleFRP` (existing `%ProgramData%` client configurations retain their path)
 
 ## Packaging And Autostart
 
@@ -251,11 +293,14 @@ The service is enabled after install, but the server waits for `sudo simplefrp p
 
 macOS uses launchd:
 
-- `/Library/LaunchDaemons/com.simplefrp.client.plist`
+- `~/Library/LaunchAgents/com.simplefrp.client.plist` for user installs
+- `/Library/LaunchDaemons/com.simplefrp.client.plist` for legacy root installs
 
-Windows uses a login task:
+Windows user installations use a login startup shortcut:
 
-- Scheduled task name: `SimpleFRP`
+- Current user Startup folder: `SimpleFRP.lnk`
+- Runs the installed executable without needing a system-wide scheduled task.
+- macOS and Windows user clients require a logged-in, awake machine.
 
 ## Clean Uninstall
 
@@ -277,9 +322,9 @@ macOS cleanup includes:
 
 Windows cleanup includes:
 
-- removal of the `SimpleFRP` scheduled task
+- removal of the current user `SimpleFRP.lnk` startup shortcut
 - stopping `simplefrp.exe`
-- removal of `%ProgramData%\SimpleFRP`
+- removal of the selected SimpleFRP runtime directory
 
 ## Third-Party Libraries And Tools
 
@@ -351,7 +396,7 @@ sudo systemctl restart simplefrp-server || sudo systemctl restart simplefrp-clie
 
 `AUTH_FAILED`: Run `simplefrp set server` again and enter the correct password.
 
-`LOCAL_PORT_IN_USE`: Choose another local port.
+A busy local target port is valid. If forwarding fails, verify that the target service accepts connections on `127.0.0.1:<local_port>`.
 
 `SERVER_PORT_IN_USE`: Choose another public port or free it on the server.
 

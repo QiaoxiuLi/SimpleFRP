@@ -1,10 +1,12 @@
 package frpwrap
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"log"
 	"net"
+	"reflect"
 	"time"
 
 	"github.com/simplefrp/simplefrp/internal/config"
@@ -27,6 +29,7 @@ func (e ClientEngine) CreateTunnel(tunnelID, localPort, publicPort int) (protoco
 		return protocol.Response{}, err
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	req := signMessage(e.AuthKey, protocol.Message{
 		Type:                protocol.TypeCreateTunnel,
 		ClientID:            e.ClientID,
@@ -48,6 +51,7 @@ func (e ClientEngine) DeleteTunnel(tunnelID, publicPort int) (protocol.Response,
 		return protocol.Response{}, err
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	req := signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeDeleteTunnel, ClientID: e.ClientID, TunnelID: tunnelID, PublicPort: publicPort})
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return protocol.Response{}, err
@@ -70,23 +74,59 @@ func (e ClientEngine) Run(tunnels []config.Tunnel) error {
 }
 
 func (e ClientEngine) runOnce(tunnels []config.Tunnel) error {
+	return e.runOnceContext(context.Background(), tunnels)
+}
+func (e ClientEngine) runOnceContext(ctx context.Context, tunnels []config.Tunnel) error {
 	conn, err := net.DialTimeout("tcp", e.ServerAddress, 10*time.Second)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	req := signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeAuth, ClientID: e.ClientID, Tunnels: toProtocolTunnels(tunnels)})
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return err
 	}
+	// A small heartbeat detects stale NAT mappings and silent disconnects.
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if json.NewEncoder(conn).Encode(protocol.Message{Type: protocol.TypeHeartbeat}) != nil {
+					_ = conn.Close()
+					return
+				}
+			}
+		}
+	}()
 	dec := json.NewDecoder(conn)
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(65 * time.Second))
 		var msg protocol.Message
 		if err := dec.Decode(&msg); err != nil {
 			return err
 		}
 		if msg.Type == protocol.TypeOpenStream {
-			go e.openStream(msg)
+			for _, t := range tunnels {
+				if t.ID == msg.TunnelID && t.LocalPort == msg.LocalPort && t.PublicPort == msg.PublicPort {
+					go e.openStream(msg)
+					break
+				}
+			}
 		}
 	}
 }
@@ -101,13 +141,15 @@ func (e ClientEngine) openStream(msg protocol.Message) {
 		_ = localConn.Close()
 		return
 	}
+	_ = serverConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	req := signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeDataConn, ClientID: e.ClientID, RequestID: msg.RequestID, TunnelID: msg.TunnelID})
 	if err := json.NewEncoder(serverConn).Encode(req); err != nil {
 		_ = localConn.Close()
 		_ = serverConn.Close()
 		return
 	}
-	pipe(localConn, serverConn)
+	_ = serverConn.SetWriteDeadline(time.Time{})
+	proxy(localConn, serverConn)
 }
 
 func toProtocolTunnels(tunnels []config.Tunnel) []protocol.TunnelStatus {
@@ -118,19 +160,40 @@ func toProtocolTunnels(tunnels []config.Tunnel) []protocol.TunnelStatus {
 	return out
 }
 
-func pipe(a, b net.Conn) {
-	done := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(b, a)
-		_ = b.Close()
-		_ = a.Close()
-		done <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(a, b)
-		_ = a.Close()
-		_ = b.Close()
-		done <- struct{}{}
-	}()
-	<-done
+// Configuration commands take effect without requiring a manual daemon restart.
+func RunConfiguredClient(load func() (config.ClientConfig, error)) error {
+	for {
+		cfg, err := load()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- NewClientEngine(cfg).runOnceContext(ctx, cfg.Tunnels) }()
+		ticker := time.NewTicker(2 * time.Second)
+		changed := false
+	wait:
+		for {
+			select {
+			case err = <-result:
+				if err != nil {
+					log.Printf("Control connection ended; retrying in 3s: %v", err)
+				}
+				break wait
+			case <-ticker.C:
+				next, loadErr := load()
+				if loadErr == nil && !reflect.DeepEqual(cfg, next) {
+					changed = true
+					cancel()
+					<-result
+					break wait
+				}
+			}
+		}
+		ticker.Stop()
+		cancel()
+		if !changed {
+			time.Sleep(3 * time.Second)
+		}
+	}
 }

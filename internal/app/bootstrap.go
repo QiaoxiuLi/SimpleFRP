@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/simplefrp/simplefrp/internal/config"
-	"github.com/simplefrp/simplefrp/internal/storage"
 	"github.com/simplefrp/simplefrp/internal/sysutil"
 )
 
@@ -20,14 +19,14 @@ func BootstrapServer(password string) error {
 	if err != nil {
 		return err
 	}
+	if previous, loadErr := config.LoadServer(); loadErr == nil {
+		previous.PasswordHash = cfg.PasswordHash
+		previous.AuthKey = cfg.AuthKey
+		cfg = previous
+	}
 	if err := config.SaveServer(cfg); err != nil {
 		return err
 	}
-	db, err := storage.OpenDefault()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
 	return nil
 }
 

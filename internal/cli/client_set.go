@@ -24,7 +24,7 @@ func setCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := ux.Ask(ux.PasswordShortPrompt)
+			password, err := ux.AskSecret(ux.PasswordShortPrompt)
 			if err != nil {
 				return err
 			}
@@ -41,9 +41,15 @@ func setCommand() *cobra.Command {
 			if err := createNextTunnel(); err != nil {
 				return err
 			}
-			_ = service.Enable(app.RoleClient)
-			_ = service.Stop(app.RoleClient)
-			_ = service.Start(app.RoleClient)
+			if err = service.Enable(app.RoleClient); err != nil {
+				return fmt.Errorf("configuration saved, but service setup failed: %w", err)
+			}
+			if err = service.Stop(app.RoleClient); err != nil {
+				return fmt.Errorf("configuration saved, but old daemon could not stop: %w", err)
+			}
+			if err = service.Start(app.RoleClient); err != nil {
+				return fmt.Errorf("configuration saved, but daemon start failed: %w; run simplefrp daemon --role client", err)
+			}
 			fmt.Println()
 			fmt.Println("Server updated successfully.")
 			fmt.Println("Connected to SimpleFRP server successfully.")

@@ -1,12 +1,16 @@
 name: simplefrp-server
 arch: amd64
 platform: linux
-version: 0.1.0
+version: 0.1.1
 section: net
 priority: optional
 maintainer: SimpleFRP
 description: SimpleFRP server package
 contents:
+  - src: ./scripts/install/linux.sh
+    dst: /usr/share/simplefrp/install-linux.sh
+  - src: ./docs/QUICKSTART.md
+    dst: /usr/share/doc/simplefrp/QUICKSTART.md
   - src: ./dist/simplefrp
     dst: /usr/bin/simplefrp
   - src: ./packaging/linux/simplefrp-server.service

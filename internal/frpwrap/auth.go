@@ -5,46 +5,25 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"time"
-
+	"github.com/simplefrp/simplefrp/internal/crypto"
 	"github.com/simplefrp/simplefrp/internal/protocol"
+	"time"
 )
 
-const authSkew = 5 * time.Minute
-
 func signMessage(key string, msg protocol.Message) protocol.Message {
-	msg.AuthKey = ""
 	msg.AuthTimestamp = time.Now().Unix()
+	msg.Nonce, _ = crypto.RandomToken(16)
 	msg.AuthProof = authProof(key, msg)
 	return msg
 }
-
-func verifyMessage(key string, msg protocol.Message) bool {
-	if key == "" || msg.AuthProof == "" || msg.AuthTimestamp == 0 {
-		return false
-	}
-	sentAt := time.Unix(msg.AuthTimestamp, 0)
-	if time.Since(sentAt) > authSkew || time.Until(sentAt) > authSkew {
-		return false
-	}
-	return hmac.Equal([]byte(msg.AuthProof), []byte(authProof(key, msg)))
-}
-
 func authProof(key string, msg protocol.Message) string {
+	msg.AuthProof = ""
+	b, _ := json.Marshal(msg)
 	mac := hmac.New(sha256.New, []byte(key))
-	_, _ = fmt.Fprintf(mac, "%s|%s|%s|%d|%d|%d|%d|%d",
-		msg.Type,
-		msg.ClientID,
-		msg.RequestID,
-		msg.TunnelID,
-		msg.LocalPort,
-		msg.PublicPort,
-		msg.RequestedPublicPort,
-		msg.AuthTimestamp,
-	)
-	// Bind the registered target list as well as scalar fields.
-	tunnels, _ := json.Marshal(msg.Tunnels)
-	_, _ = mac.Write(tunnels)
+	mac.Write(b)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+func verifyMessage(key string, msg protocol.Message) bool {
+	age := time.Since(time.Unix(msg.AuthTimestamp, 0))
+	return key != "" && len(msg.Nonce) >= 20 && age < time.Minute && age > -time.Minute && hmac.Equal([]byte(msg.AuthProof), []byte(authProof(key, msg)))
 }

@@ -1,20 +1,21 @@
 #!/bin/sh
 set -eu
-# User installation: no administrator password or unrelated system changes.
+[ "$(id -u)" -ne 0 ] || { echo 'Install as the logged-in user, not root.' >&2; exit 1; }
 source_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 binary="$source_dir/simplefrp"
-[ -f "$binary" ] || binary="$source_dir/simplefrp-client-darwin-arm64"
-[ -f "$binary" ] || { echo 'Place this installer beside the SimpleFRP binary.' >&2; exit 1; }
-install_dir="$HOME/.local/bin"
-mkdir -p "$install_dir"
-if [ -f "$install_dir/simplefrp" ]; then
- backup_dir="$HOME/Library/Application Support/SimpleFRP/backups/$(date +%Y%m%d-%H%M%S)"
- mkdir -p "$backup_dir"
- cp -p "$install_dir/simplefrp" "$backup_dir/simplefrp"
+[ -f "$binary" ] || binary="$source_dir/simplefrp-client-darwin-$(uname -m)"
+[ -f "$binary" ] || { echo 'Place this installer beside the SimpleFRP executable.' >&2; exit 1; }
+destination="$HOME/.local/bin/simplefrp"
+if [ -f "$destination" ]; then
+ case "$("$destination" --version)" in
+  'simplefrp version 0.2.'*) "$destination" install --role client --prepare-upgrade ;;
+  *) echo 'Legacy installation preserved. Back it up and uninstall it before installing v2.' >&2; exit 1 ;;
+ esac
 fi
-install -m 755 "$binary" "$install_dir/simplefrp"
-printf 'Installed: %s\nConfigure and start: "%s" setup\n' "$install_dir/simplefrp" "$install_dir/simplefrp"
-printf 'The client starts at login after configuration. No PATH or system files were changed.\n'
-if [ "${1:-}" != "--no-configure" ]; then
- "$install_dir/simplefrp" setup --role client "$@"
-fi
+mkdir -p "$(dirname "$destination")"
+stage="$destination.next.$$"
+trap 'rm -f -- "$stage"' EXIT
+install -m 755 "$binary" "$stage"
+mv -f -- "$stage" "$destination"
+"$destination" install --role client "$@"
+printf 'Installed for this user. In a new terminal: simplefrp set <connection-string>\n'

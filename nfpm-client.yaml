@@ -1,7 +1,8 @@
 name: simplefrp-client
 arch: amd64
 platform: linux
-version: 0.1.1
+version: 0.2.0
+conflicts: [simplefrp-server]
 section: net
 priority: optional
 maintainer: SimpleFRP
@@ -18,6 +19,7 @@ contents:
   - src: ./configs/role.client
     dst: /etc/simplefrp/role
 scripts:
+  preinstall: ./packaging/linux/preinstall.sh
   postinstall: ./packaging/linux/postinstall.sh
   preremove: ./packaging/linux/preremove.sh
   postremove: ./packaging/linux/postremove.sh

@@ -1,6 +1,14 @@
+# Reference only. Run simplefrp run to generate identity, keys and free ports.
+version = 2
+server_id = ""
+public_ip = ""
 bind_address = "0.0.0.0"
-control_port = 8388
-dashboard_port = 8387
-dashboard_token = "change-on-install"
-port_min = 20000
-port_max = 60000
+control_port = 0
+dashboard_bind_address = "127.0.0.1"
+dashboard_port = 0
+first_public_port = 0
+invite_key = ""
+admin_key = ""
+certificate = ""
+private_key = ""
+fingerprint = ""

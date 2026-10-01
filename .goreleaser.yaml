@@ -10,16 +10,17 @@ release:
       name_template: install-macos.sh
     - glob: scripts/install/windows.ps1
       name_template: install-windows.ps1
+    - glob: docs/SimpleFRP_Project_Guide_v0.2.0.pdf
 before:
   hooks:
-    - go mod tidy
+    - go test ./...
 builds:
   - id: simplefrp-linux
     main: ./cmd/simplefrp
     binary: simplefrp
     env: [CGO_ENABLED=0]
     goos: [linux]
-    goarch: [amd64]
+    goarch: [amd64, arm64]
   - id: simplefrp-windows
     main: ./cmd/simplefrp
     binary: simplefrp
@@ -31,20 +32,25 @@ builds:
     binary: simplefrp
     env: [CGO_ENABLED=0]
     goos: [darwin]
-    goarch: [arm64]
+    goarch: [amd64, arm64]
 nfpms:
   - id: server
     maintainer: QiaoxiuLi
     package_name: simplefrp-server
-    file_name_template: simplefrp-server-linux-amd64
+    file_name_template: "simplefrp-server-linux-{{ .Arch }}"
+    conflicts: [simplefrp-client]
     ids: [simplefrp-linux]
     formats: [deb, rpm]
     bindir: /usr/bin
+    license: MIT
     scripts:
+      preinstall: packaging/linux/preinstall.sh
       postinstall: packaging/linux/postinstall.sh
       preremove: packaging/linux/preremove.sh
       postremove: packaging/linux/postremove.sh
     contents:
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/simplefrp/THIRD_PARTY_NOTICES.md
       - src: scripts/install/linux.sh
         dst: /usr/share/simplefrp/install-linux.sh
         file_info:
@@ -60,15 +66,20 @@ nfpms:
   - id: client
     maintainer: QiaoxiuLi
     package_name: simplefrp-client
-    file_name_template: simplefrp-client-linux-amd64
+    file_name_template: "simplefrp-client-linux-{{ .Arch }}"
+    conflicts: [simplefrp-server]
     ids: [simplefrp-linux]
     formats: [deb, rpm]
     bindir: /usr/bin
+    license: MIT
     scripts:
+      preinstall: packaging/linux/preinstall.sh
       postinstall: packaging/linux/postinstall.sh
       preremove: packaging/linux/preremove.sh
       postremove: packaging/linux/postremove.sh
     contents:
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/simplefrp/THIRD_PARTY_NOTICES.md
       - src: scripts/install/linux.sh
         dst: /usr/share/simplefrp/install-linux.sh
         file_info:
@@ -89,10 +100,14 @@ archives:
     files:
       - README.md
       - LICENSE
+      - THIRD_PARTY_NOTICES.md
       - src: packaging/windows/install.ps1
         dst: .
         strip_parent: true
       - src: packaging/windows/install.cmd
+        dst: .
+        strip_parent: true
+      - src: packaging/windows/uninstall.ps1
         dst: .
         strip_parent: true
       - src: docs/QUICKSTART.md
@@ -101,13 +116,17 @@ archives:
   - id: macos
     ids: [simplefrp-macos]
     formats: [tar.gz]
-    name_template: simplefrp-client-darwin-arm64
+    name_template: "simplefrp-client-darwin-{{ .Arch }}"
     files:
       - README.md
       - LICENSE
+      - THIRD_PARTY_NOTICES.md
       - src: docs/QUICKSTART.md
         dst: .
         strip_parent: true
       - src: packaging/macos/install.sh
+        dst: .
+        strip_parent: true
+      - src: packaging/macos/uninstall.sh
         dst: .
         strip_parent: true

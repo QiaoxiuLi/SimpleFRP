@@ -1,3 +1,8 @@
+# Reference only. Run simplefrp set <connection-string> to generate real values.
+version = 2
+server_id = ""
 server_address = ""
-password_key = ""
+fingerprint = ""
 client_id = ""
+client_key = ""
+tunnels = []

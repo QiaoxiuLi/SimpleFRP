@@ -18,6 +18,8 @@ jobs:
             if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
           }
           Expand-Archive dist/simplefrp-client-windows-amd64.zip -DestinationPath "$env:RUNNER_TEMP/simplefrp-install"
-          & "$env:RUNNER_TEMP/simplefrp-install/install.ps1" -NoConfigure
-          & "$env:LOCALAPPDATA/Programs/SimpleFRP/simplefrp.exe" setup --help
+          & "$env:RUNNER_TEMP/simplefrp-install/install.ps1" -NoStart
+          & "$env:LOCALAPPDATA/Programs/SimpleFRP/simplefrp.exe" --version
           if ($LASTEXITCODE -ne 0) { throw 'Installed client cannot execute' }
+          & "$env:LOCALAPPDATA/Programs/SimpleFRP/simplefrp.exe" uninstall
+          if ($LASTEXITCODE -ne 0) { throw 'Uninstall failed' }

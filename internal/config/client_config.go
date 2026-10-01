@@ -2,53 +2,31 @@ package config
 
 import (
 	"fmt"
-	"strings"
-
-	"github.com/simplefrp/simplefrp/internal/crypto"
 	"github.com/simplefrp/simplefrp/internal/sysutil"
 )
 
 type ClientConfig struct {
-	ServerAddress string   `mapstructure:"server_address"`
-	PasswordKey   string   `mapstructure:"password_key"`
-	ClientID      string   `mapstructure:"client_id"`
-	Tunnels       []Tunnel `mapstructure:"tunnels"`
+	Version       int      `mapstructure:"version" toml:"version"`
+	ServerID      string   `mapstructure:"server_id" toml:"server_id"`
+	ServerAddress string   `mapstructure:"server_address" toml:"server_address"`
+	Fingerprint   string   `mapstructure:"fingerprint" toml:"fingerprint"`
+	ClientID      string   `mapstructure:"client_id" toml:"client_id"`
+	ClientKey     string   `mapstructure:"client_key" toml:"client_key"`
+	Tunnels       []Tunnel `mapstructure:"tunnels" toml:"tunnels"`
 }
 
-const SharedAuthSalt = "simplefrp-control-v1"
-
-func DefaultClientConfig() ClientConfig {
-	id, _ := crypto.RandomToken(12)
-	return ClientConfig{ClientID: id, Tunnels: []Tunnel{}}
-}
-
+func DefaultClientConfig() ClientConfig { return ClientConfig{Version: 2, Tunnels: []Tunnel{}} }
 func LoadClient() (ClientConfig, error) {
 	var cfg ClientConfig
-	err := load(sysutil.ClientConfigPath(), &cfg)
-	return cfg, err
-}
-
-func SaveClient(cfg ClientConfig) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "server_address = %q\n", cfg.ServerAddress)
-	fmt.Fprintf(&b, "password_key = %q\n", cfg.PasswordKey)
-	fmt.Fprintf(&b, "client_id = %q\n\n", cfg.ClientID)
-	for _, t := range cfg.Tunnels {
-		fmt.Fprintf(&b, "[[tunnels]]\nid = %d\nlocal_port = %d\npublic_port = %d\nstatus = %q\n\n", t.ID, t.LocalPort, t.PublicPort, t.Status)
+	if err := load(sysutil.ClientConfigPath(), &cfg); err != nil {
+		return cfg, err
 	}
-	return writeSecure(sysutil.ClientConfigPath(), []byte(b.String()))
-}
-
-func NextTunnelID(tunnels []Tunnel) int {
-	max := -1
-	for _, t := range tunnels {
-		if t.ID > max {
-			max = t.ID
-		}
+	if cfg.Version != 2 {
+		return cfg, fmt.Errorf("legacy client configuration detected; it has not been changed; use a separate v2 installation")
 	}
-	return max + 1
+	return cfg, nil
 }
-
+func SaveClient(cfg ClientConfig) error { return writeTOML(sysutil.ClientConfigPath(), cfg) }
 func FindTunnel(tunnels []Tunnel, id int) (Tunnel, int, bool) {
 	for i, t := range tunnels {
 		if t.ID == id {

@@ -1,27 +1,42 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/simplefrp/simplefrp/internal/sysutil"
-	"github.com/spf13/viper"
 )
 
 type Tunnel struct {
-	ID         int    `mapstructure:"id" json:"id"`
-	LocalPort  int    `mapstructure:"local_port" json:"local_port"`
-	PublicPort int    `mapstructure:"public_port" json:"public_port"`
-	Status     string `mapstructure:"status" json:"status"`
+	ID         int    `mapstructure:"id" json:"id" toml:"id"`
+	LocalPort  int    `mapstructure:"local_port" json:"local_port" toml:"local_port"`
+	PublicPort int    `mapstructure:"public_port" json:"public_port" toml:"public_port"`
+	Status     string `mapstructure:"status" json:"status" toml:"status"`
+}
+
+func writeTOML(path string, value any) error {
+	b, err := toml.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeSecure(path, b)
+}
+func WriteJSON(path string, value any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeSecure(path, b)
 }
 
 func load(path string, out any) error {
-	v := viper.New()
-	v.SetConfigFile(path)
-	if err := v.ReadInConfig(); err != nil {
+	b, err := os.ReadFile(path)
+	if err != nil {
 		return err
 	}
-	return v.Unmarshal(out)
+	return toml.Unmarshal(b, out)
 }
 
 func writeSecure(path string, content []byte) error {

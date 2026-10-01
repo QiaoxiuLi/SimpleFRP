@@ -1,15 +1,19 @@
 package frpwrap
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net"
-	"reflect"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/simplefrp/simplefrp/internal/config"
+	"github.com/simplefrp/simplefrp/internal/crypto"
 	"github.com/simplefrp/simplefrp/internal/protocol"
 )
 
@@ -17,67 +21,105 @@ type ClientEngine struct {
 	ServerAddress string
 	ClientID      string
 	AuthKey       string
+	Fingerprint   string
+	Admin         bool
 }
 
 func NewClientEngine(cfg config.ClientConfig) ClientEngine {
-	return ClientEngine{ServerAddress: cfg.ServerAddress, ClientID: cfg.ClientID, AuthKey: cfg.PasswordKey}
+	return ClientEngine{ServerAddress: cfg.ServerAddress, ClientID: cfg.ClientID, AuthKey: cfg.ClientKey, Fingerprint: cfg.Fingerprint}
 }
-
-func (e ClientEngine) CreateTunnel(tunnelID, localPort, publicPort int) (protocol.Response, error) {
-	conn, err := net.DialTimeout("tcp", e.ServerAddress, 5*time.Second)
+func NewAdmin(cfg config.ServerConfig) ClientEngine {
+	return ClientEngine{ServerAddress: net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.ControlPort)), AuthKey: cfg.AdminKey, Fingerprint: cfg.Fingerprint, Admin: true}
+}
+func (e ClientEngine) dial(ctx context.Context) (net.Conn, error) {
+	pinned, err := crypto.PinnedTLS(e.Fingerprint)
 	if err != nil {
-		return protocol.Response{}, err
+		return nil, err
+	}
+	dialer := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: pinned}
+	return dialer.DialContext(ctx, "tcp", e.ServerAddress)
+}
+func (e ClientEngine) Request(msg protocol.Message) (protocol.Response, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	return e.RequestContext(ctx, msg)
+}
+func (e ClientEngine) RequestContext(ctx context.Context, msg protocol.Message) (protocol.Response, error) {
+	conn, err := e.dial(ctx)
+	if err != nil {
+		return protocol.Response{}, fmt.Errorf("server unreachable or identity verification failed: %w", err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	req := signMessage(e.AuthKey, protocol.Message{
-		Type:                protocol.TypeCreateTunnel,
-		ClientID:            e.ClientID,
-		TunnelID:            tunnelID,
-		LocalPort:           localPort,
-		RequestedPublicPort: publicPort,
-	})
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	deadline := time.Now().Add(25 * time.Second)
+	if limit, ok := ctx.Deadline(); ok && limit.Before(deadline) {
+		deadline = limit
+	}
+	conn.SetDeadline(deadline)
+	msg.ClientID = e.ClientID
+	msg.Admin = e.Admin
+	msg = signMessage(e.AuthKey, msg)
+	if err = json.NewEncoder(conn).Encode(msg); err != nil {
 		return protocol.Response{}, err
 	}
 	var resp protocol.Response
-	err = json.NewDecoder(conn).Decode(&resp)
-	return resp, err
+	if err = json.NewDecoder(bufio.NewReader(conn)).Decode(&resp); err != nil {
+		return resp, err
+	}
+	if !resp.OK {
+		return resp, errors.New(resp.Message)
+	}
+	return resp, nil
 }
-
-func (e ClientEngine) DeleteTunnel(tunnelID, publicPort int) (protocol.Response, error) {
-	conn, err := net.DialTimeout("tcp", e.ServerAddress, 5*time.Second)
+func Pair(invite crypto.Invite, local int) (config.ClientConfig, error) {
+	engine := ClientEngine{ServerAddress: invite.Address(), AuthKey: invite.Key, Fingerprint: invite.Fingerprint}
+	resp, err := engine.Request(protocol.Message{Type: protocol.TypePair, LocalPort: local})
 	if err != nil {
-		return protocol.Response{}, err
+		return config.ClientConfig{}, err
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	req := signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeDeleteTunnel, ClientID: e.ClientID, TunnelID: tunnelID, PublicPort: publicPort})
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return protocol.Response{}, err
-	}
-	var resp protocol.Response
-	err = json.NewDecoder(conn).Decode(&resp)
-	return resp, err
+	return config.ClientConfig{Version: 2, ServerID: invite.ServerID, ServerAddress: invite.Address(), Fingerprint: invite.Fingerprint, ClientID: resp.ClientID, ClientKey: resp.ClientKey, Tunnels: resp.Tunnels}, nil
+}
+func (e ClientEngine) CreateTunnel(local int) (protocol.Response, error) {
+	return e.Request(protocol.Message{Type: protocol.TypeCreateTunnel, LocalPort: local})
 }
 
-func (e ClientEngine) Run(tunnels []config.Tunnel) error {
-	if e.ServerAddress == "" {
-		return fmt.Errorf("server address is not configured")
-	}
+type ClientCallbacks struct {
+	Load   func() (config.ClientConfig, error)
+	Save   func(config.ClientConfig) error
+	Status func(protocol.Status)
+}
+
+var errServerMoved = errors.New("server endpoint updated")
+
+func RunClient(ctx context.Context, callbacks ClientCallbacks) error {
 	for {
-		if err := e.runOnce(tunnels); err != nil {
-			time.Sleep(3 * time.Second)
+		if ctx.Err() != nil {
+			return nil
+		}
+		cfg, err := callbacks.Load()
+		if err == nil && cfg.ServerAddress != "" {
+			err = NewClientEngine(cfg).run(ctx, cfg, callbacks)
+		}
+		if errors.Is(err, errServerMoved) {
 			continue
+		}
+		if callbacks.Status != nil {
+			status := protocol.Status{Tunnels: []protocol.TunnelStatus{}}
+			_, p, _ := net.SplitHostPort(cfg.ServerAddress)
+			status.HeartbeatPort, _ = strconv.Atoi(p)
+			for _, t := range cfg.Tunnels {
+				status.Tunnels = append(status.Tunnels, protocol.TunnelStatus{ID: t.ID, LocalPort: t.LocalPort, PublicPort: t.PublicPort, Status: "offline"})
+			}
+			callbacks.Status(status)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(3 * time.Second):
 		}
 	}
 }
-
-func (e ClientEngine) runOnce(tunnels []config.Tunnel) error {
-	return e.runOnceContext(context.Background(), tunnels)
-}
-func (e ClientEngine) runOnceContext(ctx context.Context, tunnels []config.Tunnel) error {
-	conn, err := net.DialTimeout("tcp", e.ServerAddress, 10*time.Second)
+func (e ClientEngine) run(ctx context.Context, cfg config.ClientConfig, callbacks ClientCallbacks) error {
+	conn, err := e.dial(ctx)
 	if err != nil {
 		return err
 	}
@@ -87,16 +129,20 @@ func (e ClientEngine) runOnceContext(ctx context.Context, tunnels []config.Tunne
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = conn.Close()
+			conn.Close()
 		case <-done:
 		}
 	}()
-	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	req := signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeAuth, ClientID: e.ClientID, Tunnels: toProtocolTunnels(tunnels)})
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	var writeMu sync.Mutex
+	send := func(msg protocol.Message) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		return json.NewEncoder(conn).Encode(msg)
+	}
+	if err = send(signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeAuth, ClientID: e.ClientID})); err != nil {
 		return err
 	}
-	// A small heartbeat detects stale NAT mappings and silent disconnects.
 	go func() {
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
@@ -105,95 +151,90 @@ func (e ClientEngine) runOnceContext(ctx context.Context, tunnels []config.Tunne
 			case <-done:
 				return
 			case <-ticker.C:
-				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if json.NewEncoder(conn).Encode(protocol.Message{Type: protocol.TypeHeartbeat}) != nil {
-					_ = conn.Close()
+				if send(protocol.Message{Type: protocol.TypeHeartbeat}) != nil {
+					conn.Close()
 					return
 				}
 			}
 		}
 	}()
-	dec := json.NewDecoder(conn)
+	var cfgMu sync.Mutex
+	decoder := json.NewDecoder(conn)
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(65 * time.Second))
 		var msg protocol.Message
-		if err := dec.Decode(&msg); err != nil {
+		if err = decoder.Decode(&msg); err != nil {
 			return err
 		}
-		if msg.Type == protocol.TypeOpenStream {
-			for _, t := range tunnels {
-				if t.ID == msg.TunnelID && t.LocalPort == msg.LocalPort && t.PublicPort == msg.PublicPort {
-					go e.openStream(msg)
-					break
-				}
+		switch msg.Type {
+		case protocol.TypeConfigure:
+			cfgMu.Lock()
+			candidate := cfg
+			candidate.Tunnels = msg.Tunnels
+			saveErr := callbacks.Save(candidate)
+			if saveErr == nil {
+				cfg = candidate
+			}
+			cfgMu.Unlock()
+			if err = send(protocol.Message{Type: protocol.TypeAck, RequestID: msg.RequestID, OK: saveErr == nil}); err != nil {
+				return err
+			}
+			if saveErr != nil && msg.Kind == "initial" {
+				return saveErr
+			}
+		case protocol.TypeMoved:
+			host, port, splitErr := net.SplitHostPort(msg.Address)
+			oldHost, _, _ := net.SplitHostPort(e.ServerAddress)
+			n, _ := strconv.Atoi(port)
+			if splitErr != nil || host != oldHost || n < 1025 || n > 65535 {
+				return errors.New("invalid server endpoint update")
+			}
+			cfgMu.Lock()
+			candidate := cfg
+			candidate.ServerAddress = msg.Address
+			err = callbacks.Save(candidate)
+			cfgMu.Unlock()
+			if err != nil {
+				return err
+			}
+			return errServerMoved
+		case protocol.TypeOpenStream:
+			cfgMu.Lock()
+			t, _, ok := config.FindTunnel(cfg.Tunnels, msg.TunnelID)
+			cfgMu.Unlock()
+			if ok && t.LocalPort == msg.LocalPort && t.PublicPort == msg.PublicPort {
+				go e.openStream(ctx, msg)
 			}
 		}
 	}
 }
-
-func (e ClientEngine) openStream(msg protocol.Message) {
-	localConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", msg.LocalPort), 10*time.Second)
+func (e ClientEngine) openStream(ctx context.Context, msg protocol.Message) {
+	local, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(msg.LocalPort)))
 	if err != nil {
 		return
 	}
-	serverConn, err := net.DialTimeout("tcp", e.ServerAddress, 10*time.Second)
+	server, err := e.dial(ctx)
 	if err != nil {
-		_ = localConn.Close()
+		local.Close()
 		return
 	}
-	_ = serverConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	server.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	req := signMessage(e.AuthKey, protocol.Message{Type: protocol.TypeDataConn, ClientID: e.ClientID, RequestID: msg.RequestID, TunnelID: msg.TunnelID})
-	if err := json.NewEncoder(serverConn).Encode(req); err != nil {
-		_ = localConn.Close()
-		_ = serverConn.Close()
+	if json.NewEncoder(server).Encode(req) != nil {
+		local.Close()
+		server.Close()
 		return
 	}
-	_ = serverConn.SetWriteDeadline(time.Time{})
-	proxy(localConn, serverConn)
-}
-
-func toProtocolTunnels(tunnels []config.Tunnel) []protocol.TunnelStatus {
-	out := make([]protocol.TunnelStatus, 0, len(tunnels))
-	for _, t := range tunnels {
-		out = append(out, protocol.TunnelStatus{TunnelID: t.ID, LocalPort: t.LocalPort, PublicPort: t.PublicPort, Status: t.Status})
-	}
-	return out
-}
-
-// Configuration commands take effect without requiring a manual daemon restart.
-func RunConfiguredClient(load func() (config.ClientConfig, error)) error {
-	for {
-		cfg, err := load()
-		if err != nil {
-			return err
+	server.SetWriteDeadline(time.Time{})
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			local.Close()
+			server.Close()
+		case <-done:
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		result := make(chan error, 1)
-		go func() { result <- NewClientEngine(cfg).runOnceContext(ctx, cfg.Tunnels) }()
-		ticker := time.NewTicker(2 * time.Second)
-		changed := false
-	wait:
-		for {
-			select {
-			case err = <-result:
-				if err != nil {
-					log.Printf("Control connection ended; retrying in 3s: %v", err)
-				}
-				break wait
-			case <-ticker.C:
-				next, loadErr := load()
-				if loadErr == nil && !reflect.DeepEqual(cfg, next) {
-					changed = true
-					cancel()
-					<-result
-					break wait
-				}
-			}
-		}
-		ticker.Stop()
-		cancel()
-		if !changed {
-			time.Sleep(3 * time.Second)
-		}
-	}
+	}()
+	proxy(local, server)
 }

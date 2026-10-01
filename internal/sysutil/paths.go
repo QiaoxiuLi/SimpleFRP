@@ -9,6 +9,9 @@ import (
 )
 
 func ConfigDir() string {
+	if path := os.Getenv("SIMPLEFRP_HOME"); path != "" {
+		return filepath.Join(path, "config")
+	}
 	if path := os.Getenv("SIMPLEFRP_CONFIG_DIR"); path != "" {
 		return path
 	}
@@ -31,6 +34,12 @@ func ConfigDir() string {
 }
 
 func DataDir() string {
+	if path := os.Getenv("SIMPLEFRP_HOME"); path != "" {
+		return filepath.Join(path, "data")
+	}
+	if path := os.Getenv("SIMPLEFRP_CONFIG_DIR"); path != "" {
+		return filepath.Join(path, "data")
+	}
 	switch runtime.GOOS {
 	case "windows":
 		return filepath.Join(ConfigDir(), "data")
@@ -42,6 +51,12 @@ func DataDir() string {
 }
 
 func LogDir() string {
+	if path := os.Getenv("SIMPLEFRP_HOME"); path != "" {
+		return filepath.Join(path, "logs")
+	}
+	if path := os.Getenv("SIMPLEFRP_CONFIG_DIR"); path != "" {
+		return filepath.Join(path, "logs")
+	}
 	switch runtime.GOOS {
 	case "windows":
 		return filepath.Join(ConfigDir(), "logs")
@@ -81,7 +96,7 @@ func FileWritable(path string) bool {
 }
 
 func ChownToServiceUser(path string) error {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS != "linux" || os.Getenv("SIMPLEFRP_HOME") != "" || os.Getenv("SIMPLEFRP_CONFIG_DIR") != "" {
 		return nil
 	}
 	u, err := user.Lookup("simplefrp")

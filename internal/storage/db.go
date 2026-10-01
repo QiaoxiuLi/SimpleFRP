@@ -1,27 +1,55 @@
 package storage
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/simplefrp/simplefrp/internal/sysutil"
 	"go.etcd.io/bbolt"
 )
 
-var buckets = [][]byte{[]byte("traffic"), []byte("connections"), []byte("tunnels")}
+var buckets = [][]byte{[]byte("traffic"), []byte("connections"), []byte("tunnels"), []byte("runtime_v2")}
 
 type Store struct {
 	db *bbolt.DB
+}
+
+func (s *Store) ReadRuntime(out any) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("runtime_v2"))
+		if b == nil || b.Get([]byte("state")) == nil {
+			return nil
+		}
+		return json.Unmarshal(b.Get([]byte("state")), out)
+	})
+}
+func (s *Store) SaveRuntime(value any) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bbolt.Tx) error { return tx.Bucket([]byte("runtime_v2")).Put([]byte("state"), b) })
 }
 
 func OpenDefault() (*Store, error) {
 	if err := sysutil.EnsureBaseDirs(); err != nil {
 		return nil, err
 	}
-	db, err := bbolt.Open(sysutil.DatabasePath(), 0600, &bbolt.Options{Timeout: time.Second})
+	return Open(sysutil.DatabasePath())
+}
+
+func Open(path string) (*Store, error) {
+	db, err := bbolt.Open(path, 0600, &bbolt.Options{Timeout: time.Second})
 	if err != nil {
 		return nil, err
 	}
-	_ = sysutil.ChownToServiceUser(sysutil.DatabasePath())
+	_ = sysutil.ChownToServiceUser(path)
 	s := &Store{db: db}
 	err = db.Update(func(tx *bbolt.Tx) error {
 		for _, name := range buckets {

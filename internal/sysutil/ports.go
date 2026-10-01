@@ -3,8 +3,10 @@ package sysutil
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
+	"syscall"
 )
 
 var ReservedPorts = map[int]bool{
@@ -20,18 +22,39 @@ func ValidatePort(port int) error {
 	if port <= 1024 || port > 65535 {
 		return fmt.Errorf("port must be between 1025 and 65535")
 	}
-	if ReservedPorts[port] {
-		return fmt.Errorf("port is reserved")
-	}
 	return nil
 }
 
 func IsPortAvailable(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
+	// Wildcard and specific-address sockets can coexist on macOS. Check each
+	// address separately so another application's listener is never overlooked.
+	addresses := []string{"127.0.0.1", "0.0.0.0", "::1", "::"}
+	interfaces, _ := net.InterfaceAddrs()
+	for _, address := range interfaces {
+		ip, _, err := net.ParseCIDR(address.String())
+		if err == nil && !ip.IsLinkLocalUnicast() {
+			addresses = append(addresses, ip.String())
+		}
 	}
-	_ = ln.Close()
+	seen := map[string]bool{}
+	for _, address := range addresses {
+		if seen[address] {
+			continue
+		}
+		seen[address] = true
+		network := "tcp6"
+		if net.ParseIP(address).To4() != nil {
+			network = "tcp4"
+		}
+		ln, err := net.Listen(network, net.JoinHostPort(address, fmt.Sprint(port)))
+		if err != nil {
+			if network == "tcp6" && (errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EADDRNOTAVAIL)) {
+				continue
+			}
+			return false
+		}
+		ln.Close()
+	}
 	return true
 }
 
@@ -42,7 +65,7 @@ func RandomAvailablePort() (int, error) {
 			return 0, err
 		}
 		port := 20000 + int(binary.BigEndian.Uint64(b[:])%40001)
-		if ValidatePort(port) == nil && IsPortAvailable(port) {
+		if ValidatePort(port) == nil && !ReservedPorts[port] && IsPortAvailable(port) {
 			return port, nil
 		}
 	}

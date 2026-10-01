@@ -55,6 +55,9 @@ Windows clients use TerminateProcess plus WaitForSingleObject; the unsupported
 test-only Windows server is allowed to finish its periodic durable sample
 before an abrupt-stop restart test. Linux's production server graceful-drain
 and persistence assertions do not use that delay.
+Occupied-port checks include the default dual-stack wildcard as well as
+IPv4/IPv6 loopback, wildcard and interface-specific bindings. The Windows CI
+dual-stack regression is reproduced by the same native acceptance test.
 
 `go vet ./...`, shell parsing, GoReleaser configuration validation and native
 PowerShell parsing are release gates. `govulncheck` was run for Linux, macOS and

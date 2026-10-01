@@ -26,6 +26,12 @@ func ValidatePort(port int) error {
 }
 
 func IsPortAvailable(port int) bool {
+	// Windows treats a dual-stack wildcard differently from separate family probes.
+	dual, err := net.Listen("tcp", net.JoinHostPort("", fmt.Sprint(port)))
+	if err != nil {
+		return false
+	}
+	dual.Close()
 	// Wildcard and specific-address sockets can coexist on macOS. Check each
 	// address separately so another application's listener is never overlooked.
 	addresses := []string{"127.0.0.1", "0.0.0.0", "::1", "::"}

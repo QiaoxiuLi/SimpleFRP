@@ -49,6 +49,13 @@ silently replace the established certificate fingerprint. Invalid unspecified
 or multicast endpoints are rejected; explicit IPv6 initialization chooses an
 IPv6 listener.
 
+Native Windows regression tests also prove stable process identity, rejection
+of a changed identity, and file-handle release before termination returns.
+Windows clients use TerminateProcess plus WaitForSingleObject; the unsupported
+test-only Windows server is allowed to finish its periodic durable sample
+before an abrupt-stop restart test. Linux's production server graceful-drain
+and persistence assertions do not use that delay.
+
 `go vet ./...`, shell parsing, GoReleaser configuration validation and native
 PowerShell parsing are release gates. `govulncheck` was run for Linux, macOS and
 Windows; x/sys was updated to 0.44.0 to include the reported Windows-module fix.

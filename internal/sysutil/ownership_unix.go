@@ -7,3 +7,6 @@ import "fmt"
 func inspectWindowsProcess(pid int) (ProcessRecord, error) {
 	return ProcessRecord{}, fmt.Errorf("Windows process inspection is unavailable on this platform")
 }
+func stopWindowsProcess(saved ProcessRecord) error {
+	return fmt.Errorf("Windows process termination is unavailable on this platform")
+}

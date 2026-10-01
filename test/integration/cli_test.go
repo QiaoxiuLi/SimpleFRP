@@ -258,6 +258,11 @@ func TestIsolatedCLIWorkflow(t *testing.T) {
 		t.Fatal("changing service ports created a tunnel")
 	}
 	beforeRestart := a.state().Tunnels[0].TotalBytes
+	if runtime.GOOS == "windows" {
+		// This test-only Windows server is force-stopped; production servers are Linux.
+		// Let the periodic durable sample finish before simulating that abrupt exit.
+		time.Sleep(1100 * time.Millisecond)
+	}
 	server.must("install", "--role", "server", "--prepare-upgrade")
 	server.must("run")
 	a.waitOnline()

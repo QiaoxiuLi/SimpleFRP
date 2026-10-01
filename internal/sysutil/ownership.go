@@ -174,15 +174,14 @@ func StopOwnedProcess(kind string) error {
 	if r.PID == os.Getpid() {
 		return nil
 	}
+	if runtime.GOOS == "windows" {
+		return stopWindowsProcess(r)
+	}
 	p, err := os.FindProcess(r.PID)
 	if err != nil {
 		return err
 	}
-	if runtime.GOOS == "windows" {
-		err = p.Kill()
-	} else {
-		err = p.Signal(syscall.SIGTERM)
-	}
+	err = p.Signal(syscall.SIGTERM)
 	if err != nil {
 		return err
 	}
